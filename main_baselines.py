@@ -32,7 +32,7 @@ parser.add_argument('--exploration_noise', default=0.1, type=float)
 parser.add_argument('--max_epochs', default=200, type=int)
 parser.add_argument('--max_steps', default=100, type=int)
 parser.add_argument('--update_iterations', default=10, type=int)
-parser.add_argument('--num_tasks', type=int, default=10)
+parser.add_argument('--num_tasks', type=int, default=20)
 parser.add_argument('--finetune', action='store_true', default=True)
 parser.add_argument("--no_hyper", action="store_true")  # use regular critic
 parser.add_argument("--reverse_hyper", action="store_true")  # use reverse critic
@@ -154,7 +154,7 @@ def train_ddpg(agent, replay_buffer, diffusion_memory, env, reservoir_buffer=Non
 
 
 EPOCHS = 10
-N_INIT = 5
+N_INIT = 10
 ITERS_INIT = 200
 ########################### Main Function ############################
 if args.finetune:
