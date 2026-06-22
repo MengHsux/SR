@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 ### personal libraries
 import envs
-from buffers import ReplayBuffer, DiffusionMemory
+from buffers import ReplayBuffer, Auxiliarybuffer
 from ddpg import DDPG
 
 parser = argparse.ArgumentParser()
@@ -32,7 +32,7 @@ parser.add_argument('--exploration_noise', default=0.1, type=float)
 parser.add_argument('--max_epochs', default=200, type=int)
 parser.add_argument('--max_steps', default=100, type=int)
 parser.add_argument('--update_iterations', default=10, type=int)
-parser.add_argument('--num_tasks', type=int, default=20)
+parser.add_argument('--num_tasks', type=int, default=10)
 parser.add_argument('--finetune', action='store_true', default=True)
 parser.add_argument("--no_hyper", action="store_true")  # use regular critic
 parser.add_argument("--reverse_hyper", action="store_true")  # use reverse critic
@@ -62,7 +62,7 @@ np.random.seed(args.random_seed)
 np.set_printoptions(precision=3)
 print('seed = %d' % args.random_seed)
 
-device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+device = torch.device(args.device if torch.cuda.is_available() else 'cuda')
 if not os.path.exists(args.output):
     os.makedirs(args.output)
 
@@ -109,7 +109,7 @@ def collect_samples(agent, env, epochs=1, random=False):
     return transitions, transitions_s
 
 
-def train_ddpg(agent, replay_buffer, diffusion_memory, env, reservoir_buffer=None):
+def train_ddpg(agent, replay_buffer, auxiliarybuffer, env, reservoir_buffer=None):
     rewards_on = np.zeros(args.max_epochs)
     rewards_off = np.zeros(args.max_epochs)
     coordinates = np.zeros((args.max_steps, 2))
@@ -126,7 +126,7 @@ def train_ddpg(agent, replay_buffer, diffusion_memory, env, reservoir_buffer=Non
             next_state, reward, done, info = env.step(action)
             ep_r += reward
             replay_buffer.push((state, next_state, action, reward, np.float(done)))
-            diffusion_memory.push(state, action)
+            auxiliarybuffer.push(state, action)
 
             state = next_state
             if done: break
@@ -134,10 +134,10 @@ def train_ddpg(agent, replay_buffer, diffusion_memory, env, reservoir_buffer=Non
 
         for it in range(args.update_iterations):
             if reservoir_buffer is not None:
-                agent.update(replay_buffer, diffusion_memory=diffusion_memory, reservoir_buffer=reservoir_buffer,
+                agent.update(replay_buffer, auxiliarybuffer=auxiliarybuffer, reservoir_buffer=reservoir_buffer,
                              batch_size=args.batch_size)
             else:
-                agent.update(replay_buffer, diffusion_memory, batch_size=args.batch_size)
+                agent.update(replay_buffer, auxiliarybuffer, batch_size=args.batch_size)
 
         ### evaluate
         state = env.reset()
@@ -150,39 +150,39 @@ def train_ddpg(agent, replay_buffer, diffusion_memory, env, reservoir_buffer=Non
             if done: break
         rewards_off[idx] = ep_r
 
-    return agent, replay_buffer, diffusion_memory, rewards_on, rewards_off
+    return agent, replay_buffer, auxiliarybuffer, rewards_on, rewards_off
 
 
 EPOCHS = 10
-N_INIT = 10
+N_INIT = 5
 ITERS_INIT = 200
 ########################### Main Function ############################
 if args.finetune:
     ### some hyper-parameters
     replay_buffer = ReplayBuffer(max_size=args.capacity)
-    diffusion_memory = DiffusionMemory(max_size=args.capacity)
+    auxiliarybuffer = Auxiliarybuffer(max_size=args.capacity)
     agent_init = DDPG(args, state_dim, action_dim, max_action, lr=args.lr, tau=args.tau,
                       gamma=args.gamma, device=device)
 
     ### training the agent for initialization using domain randomization
     replay_buffer.reset(max_size=args.capacity)
-    diffusion_memory.reset(max_size=args.capacity)
+    auxiliarybuffer.reset(max_size=args.capacity)
     for idx in range(N_INIT):
         env.reset_task(tasks[idx])
         transitions, transitions_s = collect_samples(agent_init, env, epochs=EPOCHS, random=True)
         replay_buffer.batch_push(transitions)
-        diffusion_memory.batch_push(transitions_s)
+        auxiliarybuffer.batch_push(transitions_s)
 
     print('\n===== Training the universal model =====')
     print('Buffer size: %d' % len(replay_buffer.storage))
     for it in tqdm(range(ITERS_INIT)):
-        _ = agent_init.update(replay_buffer, diffusion_memory, batch_size=args.batch_size)
+        _ = agent_init.update(replay_buffer, auxiliarybuffer, batch_size=args.batch_size)
 
     rewards_on = np.zeros((len(tasks), args.max_epochs))
     rewards_off = np.zeros((len(tasks), args.max_epochs))
     env.reset_task(tasks[0])
     replay_buffer.reset(max_size=args.capacity)
-    diffusion_memory.reset(max_size=args.capacity)
+    auxiliarybuffer.reset(max_size=args.capacity)
 
     print('\n=============== Baseline: Fine-tune ===============')
     agent = DDPG(args, state_dim, action_dim, max_action, lr=args.lr, tau=args.tau,
@@ -192,9 +192,9 @@ if args.finetune:
         print('Task %d' % (period + 1), tasks[period])
         env.reset_task(tasks[period])
         replay_buffer.reset(max_size=args.capacity)
-        diffusion_memory.reset(max_size=args.capacity)
+        auxiliarybuffer.reset(max_size=args.capacity)
         agent.load_from(agent_init)
-        agent, replay_buffer, diffusion_memory, r_on, r_off = train_ddpg(agent, replay_buffer, diffusion_memory, env)
+        agent, replay_buffer, auxiliarybuffer, r_on, r_off = train_ddpg(agent, replay_buffer, auxiliarybuffer, env)
         rewards_on[period] = r_on
         rewards_off[period] = r_off
 
