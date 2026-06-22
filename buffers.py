@@ -40,7 +40,7 @@ class ReplayBuffer():
         self.max_size = max_size
 
 
-class DiffusionMemory():
+class Auxiliarybuffer():
 
     def __init__(self, max_size=np.inf):
         self.capacity = int(max_size)
