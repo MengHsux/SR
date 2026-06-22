@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal
-from buffers import ReplayBuffer
+from buffers import ReplayBuffer, Auxiliarybuffer
 import os, math
 import copy
 
@@ -147,8 +147,8 @@ class DDPG(object):
         for target_param, param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(param.data)
 
-    def action_gradient(self, batch_size, diffusion_memory):
-        states, best_actions, idxs = diffusion_memory.sample(batch_size)
+    def action_gradient(self, batch_size, auxiliarybuffer):
+        states, best_actions, idxs = auxiliarybuffer.sample(batch_size)
         states = torch.FloatTensor(states).to(device)
         best_actions = torch.FloatTensor(best_actions).to(device)
 
@@ -178,12 +178,12 @@ class DDPG(object):
         best_actions = best_actions.detach()
         states = states.detach()
 
-        diffusion_memory.replace(idxs, best_actions.cpu().numpy())
-        diffusion_memory.replace1(idxs, states.cpu().numpy())
+        auxiliarybuffer.replace(idxs, best_actions.cpu().numpy())
+        auxiliarybuffer.replace1(idxs, states.cpu().numpy())
 
         return states, best_actions
 
-    def update(self, replay_buffer, diffusion_memory, batch_size=32):
+    def update(self, replay_buffer, auxiliarybuffer, batch_size=32):
         self.total_it += 1
         # Sample replay buffer
         x, y, u, r, d = replay_buffer.sample(batch_size)
@@ -225,7 +225,7 @@ class DDPG(object):
             self.actor_optimizer.step()
 
             # Policy Training
-            states, best_actions = self.action_gradient(batch_size, diffusion_memory)
+            states, best_actions = self.action_gradient(batch_size, auxiliarybuffer)
             # Calculate the mean squared error between the actor output and the optimal action
             actor_pred = self.actor(states)  # Action predicted by the Actor network based on the state
             actor_loss1 = F.mse_loss(actor_pred, best_actions)  # MSE loss
